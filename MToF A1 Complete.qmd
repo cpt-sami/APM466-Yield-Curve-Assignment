@@ -1,0 +1,403 @@
+---
+title: "Mathematical Theory of Finance Yield Curve"
+#execute: 
+#  echo: false
+author: "Shmell Creon"
+format: pdf 
+editor: visual
+---
+
+# Preamble
+
+```{r}
+library(matlib)
+price_data <- read.csv("MToF Bond Prices.csv")
+bond_data <- read.csv("MToF Bond Datas.csv")
+bond_dates <- read.csv("MToF Bond Dates.csv")
+coupons <- bond_data[[2]]
+years_until_maturity <- bond_data[[3]]/365
+face_value <- 100
+```
+
+# Problem 1
+
+1.  **Why don't we just print more money?:** Bonds give the government the power to fund themselves but also act as a stronger tool for monetary policy, allowing for spending without undermining the legitimacy of the state currency by introducing excess inflation.
+
+2.  **Yield Curve Flattening:** If long-term economic growth is uncertain but short-term is stable (possibly due to unstable political situations like new elections or instability abroad), people will bid on bonds with longer time horizons. This raises their price and brings their yield down while the short-term yield remains stable, causing the flattening.
+
+3.  **Quantitative Easing:** Quantitative easing is a monetary policy wherein the central banks increase the money supply to stimulate market growth by buying back government bonds (and other securities). At its peak during Covid, it was purchasing "at least \$80 billion a month in Treasuries and \$40 billion in residential and commercial mortgage-backed securities" ([Brookings Institute](https://www.brookings.edu/articles/fed-response-to-covid19/)).
+
+# Problem 2
+
+An ideal selection of bonds should have maturity spaced roughly at 6-month intervals so that any interpolation required between points has an equal distance and doesn't magnify any errors more than others. An even 6-month distribution across 10 stocks gives us the 0–5-year yield curve we are investigating.
+
+We want the coupon payments to be near the date of maturity of the previous stocks since that’s the rate we will use to discount them. If two stocks have similar maturities, some other deciding factors are a more moderate coupon to avoid outliers, and a more recent issue date for a more accurate price. Using these as our north star, the following ten bonds have been chosen:
+
+-   `CA135087E679`: CAN 1.50 Jun 26
+-   `CA135087S547`: CAN 3.00 Feb 27
+-   `CA135087F825`: CAN 1.00 Jun 27
+-   `CA135087T958`: CAN 2.25 Feb 28
+-   `CA135087H235`: CAN 2.00 Jun 28
+-   `CA135087Q491`: CAN 3.25 Sep 28
+-   `CA135087J397`: CAN 2.25 Jun 29
+-   `CA135087N670`: CAN 2.25 Dec 29
+-   `CA135087T388`: CAN 2.75 Sep 30
+-   `CA135087L443`: CAN 0.50 Dec 30
+
+# Problem 3
+
+The eigenvectors of the covariance matrix, sometimes called principal components, give us a direction of highest variance. Mathematically, when the data is projected onto this vector, it has the highest variance. Intuitively, one may think of the eigenvector as describing the mix of random variables that has most of the variation. In this context our eigenvector represents the weights of a portfolio that explains most of the variance in the market
+
+The eigenvalues of these vectors are a measure of the variance captured by its respective eigenvector; a larger eigenvalue means that it has more variance. Ordering these eigenvectors by their respective eigenvalue’s magnitude, we can glean across which axes we have relative noise (small eigenvalues) vs. important data (large eigenvalues).
+
+# Problem 4
+# Problem 4
+
+## a) YTM
+
+### Calculating YTM
+
+```{r}
+calculate_ytm <- function(price, face_value, coupon_rate, time_to_maturity) {
+  
+  coupon_payment <- (coupon_rate * face_value) / 2
+  n_periods <- time_to_maturity * 2
+  
+  # Create YTM polynomial ( (price - discounted coupons)YTM^n )
+  bond_equation <- function(ytm) {
+    
+    t <- 1:n_periods
+    pv_coupons <- sum(coupon_payment / (1 + ytm/2)^t)
+    pv_face <- face_value / (1 + ytm/2)^n_periods
+    
+    return((pv_coupons + pv_face) - price)
+  }
+  
+  result <- uniroot(bond_equation, interval = c(-0.1, 0.5))$root
+  
+  return(result)
+}
+```
+
+### Plotting
+
+```{r}
+par(mfrow = c(2,3))
+
+for (day in 1:11) {
+  Maturity = years_until_maturity
+  Yield = numeric(10)
+  for (bond in 1:10) {
+    bond_yield <- calculate_ytm(price_data[day,bond], 100, coupons[bond],
+                               years_until_maturity[bond]) * 100
+    Yield[bond] <- bond_yield
+  }
+  
+  plot(Maturity, Yield,
+       type = "o",          # Lines and points
+       col = "blue", 
+       lwd = 2,             # Line width
+       pch = 19,            # Solid circle points
+       main = "Yield Curve",
+       xlab = "Maturity (Years)",
+       ylab = "Yield (%)",
+       ylim = c(min(Yield) * 0.9, max(Yield) * 1.1)) 
+  mtext(bond_dates[[day,1]])
+  grid()
+  
+}
+```
+
+### All together now!
+
+```{r}
+all_yields_matrix <- matrix(nrow = 10, ncol = 11)
+
+for (day in 1:11) {
+  for (bond in 1:10) {
+    all_yields_matrix[bond, day] <- calculate_ytm(price_data[day, bond], 
+                                                  100, coupons[bond], 
+                                                  years_until_maturity[bond]) * 100
+  }
+}
+
+
+plot(years_until_maturity, all_yields_matrix[,1], 
+     type = "n",  
+     main = "YTM Curves (All 11 Days)",
+     xlab = "Maturity (Years)",
+     ylab = "Yield (%)",
+     ylim = c(min(all_yields_matrix), max(all_yields_matrix))) # Scale to fit all data
+grid()
+
+colors <- rainbow(11)
+for (day in 1:11) {
+  lines(years_until_maturity, all_yields_matrix[, day], 
+        type = "o",       
+        col = colors[day], 
+        pch = 19, 
+        cex = 0.8)    
+}
+
+legend("bottomright", legend = paste(bond_dates[[1]]), 
+       col = colors, lty = 1, pch = 19, cex=0.4)
+
+```
+
+## b) Spot Rates
+
+### Pseudo-code
+
+The algorithm for deriving spot rates is reasonably simple, for any day of data our bond maturing in six months is functionally a zero coupon bond, with notional equal to the sum of face value and coupon. We now have our observed price, a notional and time until stock matures, using the compounding formula, $r_1 = \left(\frac{F + C}{P} \right) -1$, we can find our spot rate for our first bond. For our n'th bond we proceed inductively, assuming we have $r_j$ for $j<n$. Rearranging our price formula, $P = \sum_{t=1}^{n-1} \frac{C}{(1+r_t)^t} + \frac{F + C}{(1+r_n)^n}$, we solve that $r_n = \left(\frac{F+C}{P - \sum_{t=1}^{n-1} \frac{C}{(1+r_t)^t}} - 1\right)^{1/n}$
+
+### Making a Spot Rate Function
+
+```{r}
+spot_rate.day <- function(x){
+  # Take x day's prices
+  current_prices <- as.numeric(price_data[x, ])
+
+  # Empty vector to store our spot rates
+  spot_rates <- numeric(length(current_prices))
+  
+  # Loop through the bonds
+  for (i in 1:length(current_prices)) {
+    
+    # Get data for the current bond "i"
+    P <- current_prices[i]
+    T <- years_until_maturity[i]
+    coupon_payment <- (coupons[i] * face_value) / 2
+    
+    if (i == 1) {
+      # Base Case
+      notional <- face_value + coupon_payment
+      
+      # Add spot to our rates
+      spot_rates[i] <- 2 * ((notional / P)^(1 / (2 * T)) - 1)
+    } 
+    
+    else {
+      # Recursive Case
+      pv_prior_coupons <- 0
+      
+      # Loop over the bonds who's spot rates we already have
+      for (j in 1:(i-1)) {
+        t_cashflow <- years_until_maturity[j] 
+        r_spot <- spot_rates[j]               
+        
+        # Discount coupon using the spot rate, and add to running turtle
+        pv_prior_coupons <- pv_prior_coupons + ( coupon_payment / (1 + r_spot/2)^(2 * t_cashflow) )
+      }
+      
+      # Calculate dirty price, and use the zero coupon formula.
+      dirty_price <- P - pv_prior_coupons
+      
+      # The notional is Face Value + Final Coupon
+      notional <- face_value + coupon_payment
+        
+      # Solve for the spot rate at time T
+      spot_rates[i] <- 2 * ((notional / dirty_price)^(1 / (2 * T)) - 1)
+    }
+  }
+  return(spot_rates)
+}
+```
+
+### Plotting
+
+```{r}
+par(mfrow = c(2,3))
+
+for (i in 1:11) {
+  curve_data <- data.frame(
+    Maturity <- years_until_maturity,
+    Yield <- spot_rate.day(i) * 100  
+  )
+  
+  plot(curve_data$Maturity, curve_data$Yield,
+       type = "o",          
+       col = "blue",
+       pch = 19,            
+       main = "Spot Rate Curve",
+       xlab = "Time horizon (Years)",
+       ylab = "Spot Rates (%)",
+       ylim = c(min(curve_data$Yield) * 0.9, 
+                max(curve_data$Yield) * 1.1)) 
+  mtext(bond_dates[[i,1]])
+  grid()
+}
+```
+
+### All together now!
+
+```{r}
+all_yields <- sapply(1:10, function(x) spot_rate.day(x) * 100)
+y_min <- min(all_yields)
+y_max <- max(all_yields)
+
+plot(years_until_maturity, all_yields[,1], 
+     type = "n",  
+     ylim = c(y_min, y_max), 
+     main = "Spot Rates for the Next 5 Years (11 Days)",
+     xlab = "Time Horizon (Years)", 
+     ylab = "Spot Rate (%)")
+
+grid()
+
+
+colors <- rainbow(10) 
+
+for (i in 1:10) {
+  lines(years_until_maturity, spot_rate.day(i) * 100, 
+        col = colors[i],
+        type = "o", 
+        pch = 19, cex = 0.5) 
+}
+
+
+legend("bottomright", legend = paste(bond_dates[[1]]), col = colors, lty = 1, pch = 19, cex=0.4)
+
+```
+
+## c) Forward Rates
+
+### Pseudo Code
+
+To calculate the forward rate we simply have to use the formula $F_{t,t+n} = \left(\frac{(1+S_{t+n})^{t+n}}{(1+s_t)^t}\right)^{\frac{1}{n}}-1$. $S_t$ is the spot rate for time t, in this problem t = 1. t + n therefore is the difference between the maturity dates of a bond maturing in one year and a bond maturing in n years. Looping over our spot rates for 2 to 5 (although I did 1.5 to 5 in 0.5 increments since we have the data) we get our desired forward rates.
+
+### Plotting
+
+```{r}
+par(mfrow = c(2,3))
+x_axis <- 0.5*c(3:10)
+Forward <-  numeric(8)
+
+for (day in 1:11) {
+  spot_rate <- spot_rate.day(day)
+  
+  for (rate in 3:10) {
+    n <- (years_until_maturity[rate]-years_until_maturity[2])
+    Forward[rate-2] <- (((1+spot_rate[rate])^years_until_maturity[rate]) / ((1 + spot_rate[2])^years_until_maturity[2]))^(1/n) - 1 
+  }
+  Forward <- Forward * 100
+  plot(x_axis, Forward,
+       type = "o",          # Lines and points
+       col = "blue", 
+       lwd = 2,             # Line width
+       pch = 19,            # Solid circle points
+       main = "Forward Rates",
+       xlab = "t (years)",
+       ylab = "Yield (%)",
+       ylim = c(min(Forward) * 0.9, max(Forward) * 1.1)) 
+  mtext(bond_dates[[day,1]])
+  grid()
+}
+```
+
+### All together now!
+
+```{r}
+plot(x_axis, Forward,
+     type = "n",  
+     main = "Forward Rate Curves (All 11 Days)",
+     xlab = "Time t (Years)",
+     ylab = "Yield (%)",
+     ylim = c(min(Forward) * 0.8, max(Forward) * 1.1))
+grid()
+
+colors <- rainbow(11)
+for (day in 1:11) {
+  spot_rate <- spot_rate.day(day)
+  
+  for (rate in 3:10) {
+    n <- (years_until_maturity[rate]-years_until_maturity[2])
+    Forward[rate-2] <- (((1+spot_rate[rate])^years_until_maturity[rate]) / ((1+spot_rate[2])^years_until_maturity[2]))^(1/n) - 1
+  }
+  Forward <- Forward*100
+  lines(x_axis, Forward, 
+        col = colors[day],
+        type = "o", 
+        pch = 19, cex = 0.5)
+}
+
+legend("bottomright", legend = paste(bond_dates[[1]]), 
+       col = colors, lty = 1, pch = 19, cex=0.4)
+
+
+```
+
+# Problem 5
+
+### YTM Time Series Covariance Matrix
+
+```{r}
+YTM_matrix <- matrix(nrow = 11, ncol = 10)
+for (bond in 1:10) {
+  for (day in 1:11) {
+    bond_yield <- calculate_ytm(price_data[day,bond], 100, coupons[bond],years_until_maturity[bond]) * 100
+    YTM_matrix[day, bond] <- bond_yield
+  }
+}
+log_diff_YTM <- diff(log(YTM_matrix))
+```
+
+Here is the covariance matrix for YTM, it has been multiplied by 10 to the power of 5 for legibility
+
+```{r}
+knitr::kable(cov(log_diff_YTM)*10^5,digits = 3)
+```
+
+### Forward Rate TS
+
+```{r}
+FR_matrix <- matrix(nrow = 11, ncol = 8)
+for (day in 1:11) {
+  spot_rate <- spot_rate.day(day)
+  
+  for (rate in 3:10) {
+    n <- (years_until_maturity[rate]-years_until_maturity[2])
+    FR_matrix[day, rate-2] <- (((1+spot_rate[rate])^years_until_maturity[rate]) / ((1 + spot_rate[2])^years_until_maturity[2]))^(1/n) - 1 
+  }
+}
+log_diff_FR <- diff(log(FR_matrix* 100))
+```
+
+Here is the covariance matrix for time series, it has been multiplied by 10 to the power of 5 for legibility
+
+```{r}
+knitr::kable(cov(log_diff_FR)*10^5,digits = 3)
+```
+
+\newpage
+
+# Problem 6
+
+### YTM eigenvectors and eigenvalues
+
+```{r}
+vals <- eigen(cov(log_diff_YTM))$values
+vectors <- eigen(cov(log_diff_YTM))$vectors
+colnames(vectors) <- signif(vals, 2)
+rownames(vectors) <- colnames(log_diff_YTM)
+
+kable(round(vectors, 4))
+```
+
+### FR eigenvectors and eigenvalues
+The columns are the eigenvectors in increasing eigenvalues. The respective eigenvalue is listed across the top.
+```{r}
+vals <- eigen(cov(log_diff_FR))$values
+vectors <- eigen(cov(log_diff_FR))$vectors
+colnames(vectors) <- signif(vals, 2)
+rownames(vectors) <- colnames(log_diff_FR)
+
+kable(round(vectors, 4))
+```
+
+### Comments
+
+Our first eigenvector has the largest eigenvalue. That means that in this direction we have the most variance of the bonds.
+
+# Assumptions Made
+
+It was assumed prices were quoted on the first of January, and that every year has 365 days. Final coupon payment made at the same date of maturity (always). Instantaneous compounding was used to calculate spot rates.
